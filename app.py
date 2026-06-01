@@ -90,17 +90,47 @@ def _ensure_cpu_model():
     log.info("CPU model ready at %s", CPU_MODEL_LOCAL_DIR)
 
 
+class _CpuComponents:
+    """Holds individually-loaded model components for CPU inference."""
+    def __init__(self, transformer, text_encoder, tokenizer, vae, scheduler):
+        self.transformer  = transformer
+        self.text_encoder = text_encoder
+        self.tokenizer    = tokenizer
+        self.vae          = vae
+        self.scheduler    = scheduler
+
+
 def _load_cpu_pipeline():
     _ensure_cpu_model()
-    from diffusers import DiffusionPipeline
-    log.info("Loading CPU pipeline (bfloat16)...")
-    pipe = DiffusionPipeline.from_pretrained(
-        str(CPU_MODEL_LOCAL_DIR),
-        torch_dtype=torch.bfloat16,
-    )
-    pipe = pipe.to("cpu")
-    log.info("CPU pipeline ready")
-    return pipe
+    log.info("Loading CPU model components (bfloat16)...")
+    base = CPU_MODEL_LOCAL_DIR
+
+    from diffusers import Flux2Transformer2DModel, AutoencoderKLFlux2, FlowMatchEulerDiscreteScheduler
+    from transformers import AutoTokenizer, AutoModelForCausalLM
+
+    transformer = Flux2Transformer2DModel.from_pretrained(
+        str(base / "transformer"), torch_dtype=torch.bfloat16
+    ).to("cpu").eval()
+    log.info("transformer loaded")
+
+    vae = AutoencoderKLFlux2.from_pretrained(
+        str(base / "vae"), torch_dtype=torch.bfloat16
+    ).to("cpu").eval()
+    log.info("vae loaded")
+
+    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(str(base / "scheduler"))
+    log.info("scheduler loaded")
+
+    tokenizer = AutoTokenizer.from_pretrained(str(base / "tokenizer"))
+    log.info("tokenizer loaded")
+
+    text_encoder = AutoModelForCausalLM.from_pretrained(
+        str(base / "text_encoder"), torch_dtype=torch.bfloat16
+    ).to("cpu").eval()
+    log.info("text_encoder loaded")
+
+    log.info("CPU components ready")
+    return _CpuComponents(transformer, text_encoder, tokenizer, vae, scheduler)
 
 
 def _startup_load():
@@ -133,18 +163,24 @@ def _run_generate(prompt: str, seed: int, steps: int, width: int, height: int) -
             height=height,
         )
 
-    # CPU path
-    gen = torch.Generator().manual_seed(seed)
-    result = _pipeline(
+    # CPU path — reuse diffusion_klein.diffusion_forward (no gemlite dependency)
+    from backend_gpu import diffusion_klein
+    c = _pipeline  # _CpuComponents
+    image = diffusion_klein.diffusion_forward(
+        transformer=c.transformer,
+        text_encoder=c.text_encoder,
+        tokenizer=c.tokenizer,
+        vae=c.vae,
+        scheduler=c.scheduler,
         prompt=prompt,
-        num_inference_steps=steps,
-        width=width,
         height=height,
-        generator=gen,
-        guidance_scale=1.0,
+        width=width,
+        num_steps=steps,
+        seed=seed,
+        guidance=1.0,
     )
     buf = io.BytesIO()
-    result.images[0].save(buf, format="PNG")
+    image.save(buf, format="PNG")
     return buf.getvalue()
 
 
