@@ -1,0 +1,7 @@
+.venv/
+venv/
+generated/
+__pycache__/
+*.pyc
+*.pyo
+demo/
