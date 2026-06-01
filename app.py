@@ -111,6 +111,9 @@ def _load_cpu_pipeline():
     transformer = Flux2Transformer2DModel.from_pretrained(
         str(base / "transformer"), torch_dtype=torch.bfloat16
     ).to("cpu").eval()
+    # diffusion_klein defaults _inference_dtype to float16 when unset;
+    # CPU weights are bfloat16, so override to avoid dtype mismatch.
+    transformer._inference_dtype = torch.bfloat16
     log.info("transformer loaded")
 
     vae = AutoencoderKLFlux2.from_pretrained(
