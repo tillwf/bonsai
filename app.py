@@ -57,14 +57,24 @@ BINARY_GEMLITE_DIR = MODELS_DIR / "bonsai-image-4B-binary-gemlite"
 
 
 def _load_gpu_pipeline():
-    from backend_gpu.pipeline_gpu import GpuPipeline
+    """Load transformer + VAE on GPU, text encoder on CPU.
 
+    Text encoder runs once per image — CPU speed is fine.
+    Keeping it off-GPU frees ~2 GB VRAM for the transformer and
+    its activation buffers, making the pipeline fit on 4 GB cards.
+    """
+    from backend_gpu.pipeline_gpu import (
+        _load_gemlite_transformer, _load_vae, _load_scheduler,
+    )
+    from hqq.models.hf.base import AutoHQQHFModel
+    from hqq.utils.patching import prepare_for_inference
+    from transformers import AutoTokenizer
+
+    # pick variant -------------------------------------------------------
     ternary_transformer = next(TERNARY_GEMLITE_DIR.glob("transformer-gemlite-*"), None)
     binary_transformer  = next(BINARY_GEMLITE_DIR.glob("transformer-gemlite-*"), None) \
         if BINARY_GEMLITE_DIR.is_dir() else None
 
-    # BONSAI_VARIANT env: "ternary" | "binary" | "auto" (default)
-    # auto = binary if downloaded (less VRAM), else ternary
     variant = os.environ.get("BONSAI_VARIANT", "auto")
     if variant == "auto":
         variant = "binary" if binary_transformer else "ternary"
@@ -74,29 +84,44 @@ def _load_gpu_pipeline():
             raise RuntimeError(
                 "Binary model not found. Run:  cd demo && bash scripts/download_model.sh binary"
             )
-        backend    = "bonsai-binary-gemlite"
-        model_dir  = BINARY_GEMLITE_DIR
+        transformer_dir = binary_transformer
+        model_dir       = BINARY_GEMLITE_DIR
     else:
         if ternary_transformer is None:
             raise RuntimeError(
                 "Ternary model not found. Run:  cd demo && bash scripts/download_model.sh ternary"
             )
-        backend    = "bonsai-ternary-gemlite"
-        model_dir  = TERNARY_GEMLITE_DIR
+        transformer_dir = ternary_transformer
+        model_dir       = TERNARY_GEMLITE_DIR
 
-    log.info("GPU backend: %s", backend)
+    log.info("GPU variant: %s  transformer: %s", variant, transformer_dir)
 
-    # GpuPipeline requires both paths at init; use placeholder for the unused one
-    pipeline = GpuPipeline(
-        backend=backend,
-        ternary_transformer_path=ternary_transformer or binary_transformer,
-        binary_transformer_path=binary_transformer or ternary_transformer,
-        text_encoder_path=model_dir / "text_encoder-hqq-4bit",
-        vae_path=model_dir / "vae",
-        tokenizer_path=str(model_dir / "text_encoder-hqq-4bit" / "tokenizer"),
+    # transformer on GPU (gemlite) ----------------------------------------
+    transformer = _load_gemlite_transformer(transformer_dir, device="cuda:0")
+    log.info("transformer on GPU — free VRAM: %.0f MB",
+             torch.cuda.mem_get_info()[0] / 1024**2)
+
+    # text encoder on CPU (HQQ pytorch — avoids ~2 GB GPU reservation) ---
+    log.info("loading text encoder on CPU (HQQ pytorch)...")
+    text_encoder = AutoHQQHFModel.from_quantized(
+        str(model_dir / "text_encoder-hqq-4bit"),
+        compute_dtype=torch.bfloat16,
+        device="cpu",
     )
-    pipeline.prewarm()
-    return pipeline
+    prepare_for_inference(text_encoder, backend="pytorch")
+    log.info("text encoder on CPU")
+
+    # VAE on GPU ----------------------------------------------------------
+    vae = _load_vae(model_dir / "vae", device="cuda:0")
+    log.info("VAE on GPU — free VRAM: %.0f MB",
+             torch.cuda.mem_get_info()[0] / 1024**2)
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        str(model_dir / "text_encoder-hqq-4bit" / "tokenizer")
+    )
+    scheduler = _load_scheduler(transformer_dir)
+
+    return _CpuComponents(transformer, text_encoder, tokenizer, vae, scheduler)
 
 
 def _ensure_cpu_model():
@@ -166,11 +191,12 @@ def _startup_load():
     global _pipeline, _mode, _mode_error, _gpu_backend
     try:
         if CUDA:
-            log.info("CUDA detected — loading gemlite GPU pipeline")
+            variant = os.environ.get("BONSAI_VARIANT", "auto")
+            log.info("CUDA detected — loading GPU pipeline (variant=%s)", variant)
             _pipeline = _load_gpu_pipeline()
-            _gpu_backend = _pipeline.backend
+            _gpu_backend = os.environ.get("BONSAI_VARIANT", "auto")
             _mode = "gpu"
-            log.info("GPU pipeline ready (%s)", _gpu_backend)
+            log.info("GPU pipeline ready")
         else:
             log.warning("No CUDA GPU — loading CPU pipeline (generation will be slow)")
             _pipeline = _load_cpu_pipeline()
@@ -184,18 +210,11 @@ def _startup_load():
 # ── inference ─────────────────────────────────────────────────────────────────
 
 def _run_generate(prompt: str, seed: int, steps: int, width: int, height: int) -> bytes:
-    if _mode == "gpu":
-        return _pipeline.generate_png(
-            prompt=prompt,
-            seed=seed,
-            steps=steps,
-            width=width,
-            height=height,
-        )
-
-    # CPU path — reuse diffusion_klein.diffusion_forward (no gemlite dependency)
+    # Both GPU and CPU paths return _CpuComponents and use diffusion_forward.
+    # On GPU: transformer + VAE on cuda:0, text encoder on CPU.
+    # On CPU: everything on CPU.
     from backend_gpu import diffusion_klein
-    c = _pipeline  # _CpuComponents
+    c = _pipeline
     image = diffusion_klein.diffusion_forward(
         transformer=c.transformer,
         text_encoder=c.text_encoder,
