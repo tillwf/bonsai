@@ -101,15 +101,20 @@ def _load_gpu_pipeline():
     log.info("transformer on GPU — free VRAM: %.0f MB",
              torch.cuda.mem_get_info()[0] / 1024**2)
 
-    # text encoder on CPU (HQQ pytorch — avoids ~2 GB GPU reservation) ---
-    log.info("loading text encoder on CPU (HQQ pytorch)...")
+    # text encoder: GPU if enough VRAM free, else CPU ----------------------
+    free_vram_mb = torch.cuda.mem_get_info()[0] / 1024**2
+    # HQQ 4-bit text encoder needs ~2100 MB on GPU
+    te_on_gpu = free_vram_mb >= 2200
+    te_device  = "cuda:0" if te_on_gpu else "cpu"
+    te_dtype   = torch.float16 if te_on_gpu else torch.bfloat16
+    log.info("loading text encoder on %s (free VRAM: %.0f MB)", te_device, free_vram_mb)
     text_encoder = AutoHQQHFModel.from_quantized(
         str(model_dir / "text_encoder-hqq-4bit"),
-        compute_dtype=torch.bfloat16,
-        device="cpu",
+        compute_dtype=te_dtype,
+        device=te_device,
     )
     prepare_for_inference(text_encoder, backend="pytorch")
-    log.info("text encoder on CPU")
+    log.info("text encoder loaded on %s", te_device)
 
     # VAE on GPU ----------------------------------------------------------
     vae = _load_vae(model_dir / "vae", device="cuda:0")
