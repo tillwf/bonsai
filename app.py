@@ -62,9 +62,16 @@ def _load_gpu_pipeline():
             "Run:  cd demo && bash scripts/download_model.sh ternary"
         )
 
+    # binary_transformer_path required by GpuPipeline constructor even when
+    # using ternary backend; use ternary dir as placeholder (never loaded).
+    binary_dir = MODELS_DIR / "bonsai-image-4B-binary-gemlite"
+    binary_transformer_dir = next(binary_dir.glob("transformer-gemlite-*"), None) \
+        if binary_dir.is_dir() else None
+
     pipeline = GpuPipeline(
         backend="bonsai-ternary-gemlite",
         ternary_transformer_path=transformer_dir,
+        binary_transformer_path=binary_transformer_dir or transformer_dir,
         text_encoder_path=TERNARY_GEMLITE_DIR / "text_encoder-hqq-4bit",
         vae_path=TERNARY_GEMLITE_DIR / "vae",
         tokenizer_path=str(TERNARY_GEMLITE_DIR / "text_encoder-hqq-4bit" / "tokenizer"),
