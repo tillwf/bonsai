@@ -9,6 +9,43 @@ Auto-detects hardware and picks the right backend:
 | NVIDIA GPU (CUDA) | gemlite ternary (1.58-bit quantized) | fast (~seconds) |
 | CPU only | diffusers FP16 unpacked | slow (~30–90 min/image) |
 
+## Requirements
+
+- Python 3.11+
+- **GPU path:** Ubuntu + NVIDIA GPU with CUDA 12.x driver
+- **CPU path:** ~16 GB RAM, ~10 GB free disk (model download on first run)
+
+### Installing CUDA (GPU path only)
+
+Skip if you have no NVIDIA GPU.
+
+```bash
+# 1. Install NVIDIA driver
+sudo apt update
+sudo ubuntu-drivers install
+sudo reboot
+
+# 2. Verify driver
+nvidia-smi   # note the "CUDA Version" shown top-right
+
+# 3. Install matching CUDA toolkit (example: CUDA 12.4)
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt update && sudo apt install cuda-toolkit-12-4
+
+# 4. Add to ~/.bashrc
+echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+source ~/.bashrc
+nvcc --version   # verify
+```
+
+| Driver version | Max CUDA |
+|----------------|----------|
+| ≥ 550          | 12.4     |
+| ≥ 525          | 12.0     |
+| ≥ 470          | 11.4     |
+
 ## Setup
 
 ### 1. Clone this repo
