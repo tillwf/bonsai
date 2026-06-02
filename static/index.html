@@ -369,10 +369,10 @@
   <div class="field">
     <label>Size</label>
     <div class="size-grid">
-      <button class="size-btn active" data-w="1024" data-h="1024">1024 × 1024<br><small>Square</small></button>
-      <button class="size-btn" data-w="1248" data-h="832">1248 × 832<br><small>Landscape</small></button>
-      <button class="size-btn" data-w="832" data-h="1248">832 × 1248<br><small>Portrait</small></button>
-      <button class="size-btn" data-w="1536" data-h="640">1536 × 640<br><small>Wide</small></button>
+      <button class="size-btn active" data-w="512" data-h="512">512 × 512<br><small>Square</small></button>
+      <button class="size-btn" data-w="768" data-h="512">768 × 512<br><small>Landscape</small></button>
+      <button class="size-btn" data-w="512" data-h="768">512 × 768<br><small>Portrait</small></button>
+      <button class="size-btn" data-w="1024" data-h="1024">1024 × 1024<br><small>Square HD</small></button>
     </div>
   </div>
 
@@ -455,7 +455,7 @@
   });
 
   // Size buttons
-  let selectedSize = { w: 1024, h: 1024 };
+  let selectedSize = { w: 512, h: 512 };
   document.querySelectorAll('.size-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));

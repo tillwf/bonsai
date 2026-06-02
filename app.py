@@ -103,8 +103,9 @@ def _load_gpu_pipeline():
 
     # text encoder: GPU if enough VRAM free, else CPU ----------------------
     free_vram_mb = torch.cuda.mem_get_info()[0] / 1024**2
-    # HQQ 4-bit text encoder needs ~2100 MB on GPU
-    te_on_gpu = free_vram_mb >= 2200
+    # Text encoder needs ~2100 MB + transformer needs ~1500 MB headroom for
+    # activations at 512x512. Require 3500 MB free before putting TE on GPU.
+    te_on_gpu = free_vram_mb >= 3500
     te_device  = "cuda:0" if te_on_gpu else "cpu"
     te_dtype   = torch.float16 if te_on_gpu else torch.bfloat16
     log.info("loading text encoder on %s (free VRAM: %.0f MB)", te_device, free_vram_mb)
@@ -253,8 +254,8 @@ class GenerateRequest(BaseModel):
     prompt: str
     seed: int | None = None
     steps: int = 4
-    width: int = 1024
-    height: int = 1024
+    width: int = 512
+    height: int = 512
 
 
 @app.get("/status")
