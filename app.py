@@ -48,33 +48,52 @@ _executor = ThreadPoolExecutor(max_workers=1)
 _pipeline = None
 _mode: str = "loading"   # "loading" | "gpu" | "cpu" | "error"
 _mode_error: str = ""
+_gpu_backend: str = ""
 
 
 # ── loaders ──────────────────────────────────────────────────────────────────
 
+BINARY_GEMLITE_DIR = MODELS_DIR / "bonsai-image-4B-binary-gemlite"
+
+
 def _load_gpu_pipeline():
     from backend_gpu.pipeline_gpu import GpuPipeline
 
-    transformer_dir = next(TERNARY_GEMLITE_DIR.glob("transformer-gemlite-*"), None)
-    if transformer_dir is None:
-        raise RuntimeError(
-            f"No transformer-gemlite-* dir found in {TERNARY_GEMLITE_DIR}.\n"
-            "Run:  cd demo && bash scripts/download_model.sh ternary"
-        )
+    ternary_transformer = next(TERNARY_GEMLITE_DIR.glob("transformer-gemlite-*"), None)
+    binary_transformer  = next(BINARY_GEMLITE_DIR.glob("transformer-gemlite-*"), None) \
+        if BINARY_GEMLITE_DIR.is_dir() else None
 
-    # binary_transformer_path required by GpuPipeline constructor even when
-    # using ternary backend; use ternary dir as placeholder (never loaded).
-    binary_dir = MODELS_DIR / "bonsai-image-4B-binary-gemlite"
-    binary_transformer_dir = next(binary_dir.glob("transformer-gemlite-*"), None) \
-        if binary_dir.is_dir() else None
+    # BONSAI_VARIANT env: "ternary" | "binary" | "auto" (default)
+    # auto = binary if downloaded (less VRAM), else ternary
+    variant = os.environ.get("BONSAI_VARIANT", "auto")
+    if variant == "auto":
+        variant = "binary" if binary_transformer else "ternary"
 
+    if variant == "binary":
+        if binary_transformer is None:
+            raise RuntimeError(
+                "Binary model not found. Run:  cd demo && bash scripts/download_model.sh binary"
+            )
+        backend    = "bonsai-binary-gemlite"
+        model_dir  = BINARY_GEMLITE_DIR
+    else:
+        if ternary_transformer is None:
+            raise RuntimeError(
+                "Ternary model not found. Run:  cd demo && bash scripts/download_model.sh ternary"
+            )
+        backend    = "bonsai-ternary-gemlite"
+        model_dir  = TERNARY_GEMLITE_DIR
+
+    log.info("GPU backend: %s", backend)
+
+    # GpuPipeline requires both paths at init; use placeholder for the unused one
     pipeline = GpuPipeline(
-        backend="bonsai-ternary-gemlite",
-        ternary_transformer_path=transformer_dir,
-        binary_transformer_path=binary_transformer_dir or transformer_dir,
-        text_encoder_path=TERNARY_GEMLITE_DIR / "text_encoder-hqq-4bit",
-        vae_path=TERNARY_GEMLITE_DIR / "vae",
-        tokenizer_path=str(TERNARY_GEMLITE_DIR / "text_encoder-hqq-4bit" / "tokenizer"),
+        backend=backend,
+        ternary_transformer_path=ternary_transformer or binary_transformer,
+        binary_transformer_path=binary_transformer or ternary_transformer,
+        text_encoder_path=model_dir / "text_encoder-hqq-4bit",
+        vae_path=model_dir / "vae",
+        tokenizer_path=str(model_dir / "text_encoder-hqq-4bit" / "tokenizer"),
     )
     pipeline.prewarm()
     return pipeline
@@ -144,13 +163,14 @@ def _load_cpu_pipeline():
 
 
 def _startup_load():
-    global _pipeline, _mode, _mode_error
+    global _pipeline, _mode, _mode_error, _gpu_backend
     try:
         if CUDA:
             log.info("CUDA detected — loading gemlite GPU pipeline")
             _pipeline = _load_gpu_pipeline()
+            _gpu_backend = _pipeline.backend
             _mode = "gpu"
-            log.info("GPU pipeline ready")
+            log.info("GPU pipeline ready (%s)", _gpu_backend)
         else:
             log.warning("No CUDA GPU — loading CPU pipeline (generation will be slow)")
             _pipeline = _load_cpu_pipeline()
@@ -215,7 +235,7 @@ class GenerateRequest(BaseModel):
 
 @app.get("/status")
 async def status():
-    return {"mode": _mode, "cuda": CUDA, "error": _mode_error}
+    return {"mode": _mode, "cuda": CUDA, "error": _mode_error, "backend": _gpu_backend}
 
 
 @app.post("/generate")

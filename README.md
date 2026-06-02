@@ -88,6 +88,7 @@ Open **http://localhost:3001**
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `PORT` | `3001` | UI server port |
+| `BONSAI_VARIANT` | `auto` | GPU model: `auto` (binary if downloaded, else ternary), `binary`, `ternary` |
 
 The server status badge in the header shows `loading model…` on startup, then `GPU` or `CPU (slow)` once ready.
 
